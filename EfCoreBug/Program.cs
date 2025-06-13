@@ -5,6 +5,7 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
+        // TODO: change this to a connection string that works for you.
         const string connectionString = "Server=localhost,1433;Initial Catalog=efcorebug;Persist Security Info=False;User ID=SA;Password=my_password01!;MultipleActiveResultSets=True;Encrypt=False;TrustServerCertificate=False;Connection Timeout=30;";
 
         var options = new DbContextOptionsBuilder<AppDbContext>()
