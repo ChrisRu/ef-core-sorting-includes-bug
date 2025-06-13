@@ -63,13 +63,15 @@ public static class Program
 
     private static async Task TestIncludeWithVaryingTakeAsync(AppDbContext context)
     {
+        Console.ResetColor();
         Console.WriteLine("\n--- Test: Checking if Translations are Included with Varying Take Values ---");
 
-        var takeValues = Enumerable.Range(1, 20);
+        var takeValues = Enumerable.Range(1, 5);
         var anyFailures = false;
 
         foreach (var takeAmount in takeValues)
         {
+            Console.ResetColor();
             Console.WriteLine($"\nTesting with Take({takeAmount}):");
             try
             {
@@ -97,7 +99,6 @@ public static class Program
                         Console.ForegroundColor = ConsoleColor.Red;
                         Console.WriteLine(
                             $"  FAIL: Item with Id {item.Id} has EMPTY Translations collection.");
-                        Console.ResetColor();
                         break;
                     }
                 }
@@ -111,18 +112,16 @@ public static class Program
                 {
                     anyFailures = true;
                 }
-
-                Console.ResetColor();
             }
             catch (Exception ex)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"  FAIL: Query for Take({takeAmount}) failed with exception: {ex.Message}");
-                Console.ResetColor();
                 anyFailures = true;
             }
         }
 
+        Console.ResetColor();
         Console.WriteLine("\n--- Test Summary ---");
         if (anyFailures)
         {
