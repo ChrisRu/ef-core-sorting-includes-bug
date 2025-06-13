@@ -26,7 +26,7 @@ public class RandomStuff
 
 public class ServiceTranslation
 {
-    public int ServiceId { get; set; }
+    public int EntityId { get; set; }
     public Service Service { get; set; } = null!;
 
     public LanguageId LanguageId { get; set; }
@@ -37,6 +37,7 @@ public class AppDbContext : DbContext
 {
     public DbSet<Service> Services { get; set; } = null!;
     public DbSet<ServiceTranslation> ServiceTranslations { get; set; } = null!;
+    public DbSet<RandomStuff> RandomStuffs { get; set; } = null!;
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -47,10 +48,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Service>()
             .HasMany(s => s.Translations)
             .WithOne(st => st.Service)
-            .HasForeignKey(st => st.ServiceId);
+            .HasForeignKey(st => st.EntityId);
 
         modelBuilder.Entity<ServiceTranslation>()
-            .HasKey(st => new { st.ServiceId, st.LanguageId });
+            .HasKey(st => new { st.EntityId, st.LanguageId });
 
         modelBuilder.Entity<RandomStuff>()
             .HasOne(x => x.Service)
@@ -61,8 +62,11 @@ public class AppDbContext : DbContext
 
 public static class Program
 {
+    private static readonly Random Random = new(100);
+
     private static async Task SeedDataAsync(AppDbContext context)
     {
+        // Using AnyAsync on a specific table within the schema is more reliable
         if (await context.Services.AnyAsync())
         {
             Console.WriteLine("Database already seeded.");
@@ -76,21 +80,22 @@ public static class Program
             {
                 Translations = new List<ServiceTranslation>
                 {
+                    // Adding Dutch and English translations, German is not included!
                     new()
                     {
                         LanguageId = LanguageId.Dutch,
-                        Name = $"Dutch Service {i}",
+                        Name = $"{Guid.NewGuid()} Dutch Service {i}",
                     },
                     new()
                     {
                         LanguageId = LanguageId.English,
-                        Name = $"English Service {i}",
+                        Name = $"{Guid.NewGuid()} English Service {i}",
                     }
                 },
-                Random = Enumerable.Range(0, 5)
-                    .Select(index => new RandomStuff
+                Random = Enumerable.Range(0, Random.Next(1, 5))
+                    .Select(_ => new RandomStuff
                     {
-                        ViewCount = index * 10,
+                        ViewCount = Random.Next(0, 2) == 0 ? 0 : 1,
                     })
                     .ToList()
             };
@@ -116,6 +121,7 @@ public static class Program
                 var results = await context.Services
                     .Include(s => s.Translations)
                     .AsSplitQuery()
+                    .Where(x => x.Random.Any(r => r.ViewCount != 1))
                     .OrderBy(projection =>
                         projection.Translations
                             .First(t => t.LanguageId == LanguageId.German).Name)
@@ -144,13 +150,11 @@ public static class Program
                     continue;
                 }
 
-                if (results.Count == 0 && takeAmount is > 0 and <= 100) // 100 is max items we have
+                if (results.Count == 0 && takeAmount is > 0 and <= 100)
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine($"  WARN: Take({takeAmount}) returned 0 items, but data should exist.");
                     Console.ResetColor();
-                    // This could be a symptom or a different issue.
-                    // For the purpose of this test, we'll focus on whether loaded items have translations.
                 }
 
                 bool allIncludedProperly = true;
@@ -189,14 +193,8 @@ public static class Program
                         anyFailures = true;
                     }
                 }
-                else if (takeAmount is > 0 and <= 100)
-                {
-                    // If no results but expected, it's a different kind of failure, but not an include failure per se.
-                    // For this specific test, if results.Any() is false, the loop for checking includes won't run.
-                }
 
                 Console.ResetColor();
-
             }
             catch (Exception ex)
             {
@@ -227,21 +225,21 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
-        const string dbFile = "efcore_repro.db";
-        const string connectionString = $"Data Source={dbFile}";
+        const string connectionString = "Server=localhost,1433;Initial Catalog=efcorebug;Persist Security Info=False;User ID=SA;Password=my_password01!;MultipleActiveResultSets=True;Encrypt=False;TrustServerCertificate=False;Connection Timeout=30;";
 
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite(connectionString)
+            .UseSqlServer(connectionString)
             .Options;
 
-        if (File.Exists(dbFile))
-        {
-            File.Delete(dbFile);
-        }
-
+        Console.WriteLine("Ensuring database is clean before test...");
         await using (var context = new AppDbContext(options))
         {
+            await context.Database.EnsureDeletedAsync();
+            Console.WriteLine("Database dropped.");
+
             await context.Database.EnsureCreatedAsync();
+            Console.WriteLine("Database and schema 'efcore_bug_repro' created.");
+
             await SeedDataAsync(context);
         }
 
@@ -250,7 +248,6 @@ public static class Program
             await TestIncludeWithVaryingTakeAsync(context);
         }
 
-        Console.WriteLine($"\nDatabase file created at: {Path.GetFullPath(dbFile)}");
-        Console.WriteLine("Reproduction finished. Check console output for results.");
+        Console.WriteLine("\nReproduction finished. Check console output for results.");
     }
 }
