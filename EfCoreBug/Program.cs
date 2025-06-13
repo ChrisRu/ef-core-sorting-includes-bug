@@ -31,9 +31,9 @@ public static class Program
         {
             var service = new Service
             {
+                // Adding Dutch and English translations, UNUSED is not included!
                 Translations = new List<ServiceTranslation>
                 {
-                    // Adding Dutch and English translations, UNUSED is not included!
                     new()
                     {
                         LanguageId = LanguageId.Dutch,
