@@ -150,34 +150,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
         base.OnModelCreating(modelBuilder);
 
-        modelBuilder.Entity<Service>()
-            .HasMany(s => s.Translations)
-            .WithOne(st => st.Service)
-            .HasForeignKey(st => st.ServiceId);
-
         modelBuilder.Entity<ServiceTranslation>()
-            .HasKey(st => new { EntityId = st.ServiceId, st.LanguageId });
-
-        modelBuilder.Entity<ServiceMetadata>()
-            .HasOne(x => x.Service)
-            .WithMany(x => x.Metadatas)
-            .HasForeignKey(x => x.ServiceId);
+            .HasKey(st => new { st.ServiceId, st.LanguageId });
     }
 }
 
 public class Service
 {
     public int Id { get; set; }
-    public ICollection<ServiceTranslation> Translations { get; set; } = null!;
-    public ICollection<ServiceMetadata> Metadatas { get; set; } = null!;
-}
 
-public class ServiceMetadata
-{
-    public int Id { get; set; }
-    public int ViewCount { get; set; }
-    public int ServiceId { get; set; }
-    public Service Service { get; set; } = null!;
+    public ICollection<ServiceTranslation> Translations { get; set; } = null!;
+
+    public ICollection<ServiceMetadata> Metadatas { get; set; } = null!;
 }
 
 public class ServiceTranslation
@@ -185,7 +169,9 @@ public class ServiceTranslation
     public int ServiceId { get; set; }
     public Service Service { get; set; } = null!;
 
+
     public LanguageId LanguageId { get; set; }
+
     public required string Name { get; set; }
 }
 
@@ -195,3 +181,14 @@ public enum LanguageId
     English = 2,
     UNUSED = 3,
 }
+
+public class ServiceMetadata
+{
+    public int Id { get; set; }
+
+    public int ServiceId { get; set; }
+    public Service Service { get; set; } = null!;
+
+    public int ViewCount { get; set; }
+}
+
