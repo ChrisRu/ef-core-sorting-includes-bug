@@ -1,67 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 
 namespace EfCoreBug;
-
-public enum LanguageId
-{
-    Dutch = 1,
-    English = 2,
-    UNUSED = 3,
-}
-
-public class Service
-{
-    public int Id { get; set; }
-    public ICollection<ServiceTranslation> Translations { get; set; } = new List<ServiceTranslation>();
-    public ICollection<ServiceMetadata> Metadatas { get; set; } = new List<ServiceMetadata>();
-}
-
-public class ServiceMetadata
-{
-    public int Id { get; set; }
-    public int ViewCount { get; set; }
-    public int ServiceId { get; set; }
-    public Service Service { get; set; } = null!;
-}
-
-public class ServiceTranslation
-{
-    public int ServiceId { get; set; }
-    public Service Service { get; set; } = null!;
-
-    public LanguageId LanguageId { get; set; }
-    public required string Name { get; set; }
-}
-
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
-{
-    public DbSet<Service> Services { get; set; } = null!;
-    public DbSet<ServiceTranslation> ServiceTranslations { get; set; } = null!;
-    public DbSet<ServiceMetadata> ServiceMetadata { get; set; } = null!;
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        base.OnModelCreating(modelBuilder);
-
-        modelBuilder.Entity<Service>()
-            .HasMany(s => s.Translations)
-            .WithOne(st => st.Service)
-            .HasForeignKey(st => st.ServiceId);
-
-        modelBuilder.Entity<ServiceTranslation>()
-            .HasKey(st => new { EntityId = st.ServiceId, st.LanguageId });
-
-        modelBuilder.Entity<ServiceMetadata>()
-            .HasOne(x => x.Service)
-            .WithMany(x => x.Metadatas)
-            .HasForeignKey(x => x.ServiceId);
-    }
-}
-
 public static class Program
 {
-    private static readonly Random Random = new(100);
-
     public static async Task Main(string[] args)
     {
         const string connectionString = "Server=localhost,1433;Initial Catalog=efcorebug;Persist Security Info=False;User ID=SA;Password=my_password01!;MultipleActiveResultSets=True;Encrypt=False;TrustServerCertificate=False;Connection Timeout=30;";
@@ -70,15 +11,10 @@ public static class Program
             .UseSqlServer(connectionString)
             .Options;
 
-        Console.WriteLine("Ensuring database is clean before test...");
         await using (var context = new AppDbContext(options))
         {
             await context.Database.EnsureDeletedAsync();
-            Console.WriteLine("Database dropped.");
-
             await context.Database.EnsureCreatedAsync();
-            Console.WriteLine("Database and schema 'efcore_bug_repro' created.");
-
             await SeedDataAsync(context);
         }
 
@@ -86,8 +22,6 @@ public static class Program
         {
             await TestIncludeWithVaryingTakeAsync(context);
         }
-
-        Console.WriteLine("\nReproduction finished. Check console output for results.");
     }
 
     private static async Task SeedDataAsync(AppDbContext context)
@@ -111,12 +45,13 @@ public static class Program
                         Name = $"{Guid.NewGuid()} English Service {i}",
                     }
                 },
-                Metadatas = Enumerable.Range(0, 2)
-                    .Select(_ => new ServiceMetadata
+                Metadatas =
+                [
+                    new ServiceMetadata
                     {
-                        ViewCount = Random.Next(0, 2) == 0 ? 0 : 1,
-                    })
-                    .ToList()
+                        ViewCount = 1
+                    },
+                ]
             };
             context.Services.Add(service);
         }
@@ -139,25 +74,41 @@ public static class Program
             {
                 var results = await context.Services
                     .Include(s => s.Translations)
+                    // Only breaks with SplitQuery
                     .AsSplitQuery()
+                    // For some reason you need some filtering to trigger the issue
                     .Where(x => x.Metadatas.Any(r => r.ViewCount == 1))
                     .OrderBy(projection =>
-                        projection.Translations
-                            .First(t => t.LanguageId == LanguageId.UNUSED).Name)
+                        // HERE IS THE ISSUE:
+                        // When changing this sorting to Dutch/English it works fine because it matches the translations.
+                        // But when using UNUSED, it fails to include translations.
+                        projection.Translations.First(t => t.LanguageId == LanguageId.UNUSED).Name)
                     .Take(takeAmount)
                     .ToListAsync();
 
+                var succeeded = true;
                 foreach (var item in results)
                 {
+                    // Translations are included, so it should be populated.
                     if (item.Translations.Count == 0)
                     {
-                        anyFailures = true;
+                        succeeded = false;
                         Console.ForegroundColor = ConsoleColor.Red;
                         Console.WriteLine(
                             $"  FAIL: Item with Id {item.Id} has EMPTY Translations collection.");
                         Console.ResetColor();
                         break;
                     }
+                }
+
+                if (succeeded)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"  PASS: Query for Take({takeAmount}) returned {results.Count} items with translations included.");
+                }
+                else
+                {
+                    anyFailures = true;
                 }
 
                 Console.ResetColor();
@@ -187,4 +138,60 @@ public static class Program
 
         Console.ResetColor();
     }
+}
+
+public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+{
+    public DbSet<Service> Services { get; set; } = null!;
+    public DbSet<ServiceTranslation> ServiceTranslations { get; set; } = null!;
+    public DbSet<ServiceMetadata> ServiceMetadata { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<Service>()
+            .HasMany(s => s.Translations)
+            .WithOne(st => st.Service)
+            .HasForeignKey(st => st.ServiceId);
+
+        modelBuilder.Entity<ServiceTranslation>()
+            .HasKey(st => new { EntityId = st.ServiceId, st.LanguageId });
+
+        modelBuilder.Entity<ServiceMetadata>()
+            .HasOne(x => x.Service)
+            .WithMany(x => x.Metadatas)
+            .HasForeignKey(x => x.ServiceId);
+    }
+}
+
+public class Service
+{
+    public int Id { get; set; }
+    public ICollection<ServiceTranslation> Translations { get; set; } = null!;
+    public ICollection<ServiceMetadata> Metadatas { get; set; } = null!;
+}
+
+public class ServiceMetadata
+{
+    public int Id { get; set; }
+    public int ViewCount { get; set; }
+    public int ServiceId { get; set; }
+    public Service Service { get; set; } = null!;
+}
+
+public class ServiceTranslation
+{
+    public int ServiceId { get; set; }
+    public Service Service { get; set; } = null!;
+
+    public LanguageId LanguageId { get; set; }
+    public required string Name { get; set; }
+}
+
+public enum LanguageId
+{
+    Dutch = 1,
+    English = 2,
+    UNUSED = 3,
 }
