@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace EfCoreBug;
 public static class Program
@@ -18,6 +19,11 @@ public static class Program
             await context.Database.EnsureCreatedAsync();
             await SeedDataAsync(context);
         }
+
+        options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlServer(connectionString)
+            .LogTo(Console.WriteLine, LogLevel.Information)
+            .Options;
 
         await using (var context = new AppDbContext(options))
         {
