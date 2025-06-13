@@ -6,17 +6,17 @@ public enum LanguageId
 {
     Dutch = 1,
     English = 2,
-    German = 3,
+    UNUSED = 3,
 }
 
 public class Service
 {
     public int Id { get; set; }
     public ICollection<ServiceTranslation> Translations { get; set; } = new List<ServiceTranslation>();
-    public ICollection<RandomStuff> Random { get; set; } = new List<RandomStuff>();
+    public ICollection<ServiceMetadata> Metadatas { get; set; } = new List<ServiceMetadata>();
 }
 
-public class RandomStuff
+public class ServiceMetadata
 {
     public int Id { get; set; }
     public int ViewCount { get; set; }
@@ -26,20 +26,18 @@ public class RandomStuff
 
 public class ServiceTranslation
 {
-    public int EntityId { get; set; }
+    public int ServiceId { get; set; }
     public Service Service { get; set; } = null!;
 
     public LanguageId LanguageId { get; set; }
     public required string Name { get; set; }
 }
 
-public class AppDbContext : DbContext
+public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<Service> Services { get; set; } = null!;
     public DbSet<ServiceTranslation> ServiceTranslations { get; set; } = null!;
-    public DbSet<RandomStuff> RandomStuffs { get; set; } = null!;
-
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+    public DbSet<ServiceMetadata> ServiceMetadata { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,14 +46,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Service>()
             .HasMany(s => s.Translations)
             .WithOne(st => st.Service)
-            .HasForeignKey(st => st.EntityId);
+            .HasForeignKey(st => st.ServiceId);
 
         modelBuilder.Entity<ServiceTranslation>()
-            .HasKey(st => new { st.EntityId, st.LanguageId });
+            .HasKey(st => new { EntityId = st.ServiceId, st.LanguageId });
 
-        modelBuilder.Entity<RandomStuff>()
+        modelBuilder.Entity<ServiceMetadata>()
             .HasOne(x => x.Service)
-            .WithMany(x => x.Random)
+            .WithMany(x => x.Metadatas)
             .HasForeignKey(x => x.ServiceId);
     }
 }
@@ -64,15 +62,36 @@ public static class Program
 {
     private static readonly Random Random = new(100);
 
-    private static async Task SeedDataAsync(AppDbContext context)
+    public static async Task Main(string[] args)
     {
-        // Using AnyAsync on a specific table within the schema is more reliable
-        if (await context.Services.AnyAsync())
+        const string connectionString = "Server=localhost,1433;Initial Catalog=efcorebug;Persist Security Info=False;User ID=SA;Password=my_password01!;MultipleActiveResultSets=True;Encrypt=False;TrustServerCertificate=False;Connection Timeout=30;";
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlServer(connectionString)
+            .Options;
+
+        Console.WriteLine("Ensuring database is clean before test...");
+        await using (var context = new AppDbContext(options))
         {
-            Console.WriteLine("Database already seeded.");
-            return;
+            await context.Database.EnsureDeletedAsync();
+            Console.WriteLine("Database dropped.");
+
+            await context.Database.EnsureCreatedAsync();
+            Console.WriteLine("Database and schema 'efcore_bug_repro' created.");
+
+            await SeedDataAsync(context);
         }
 
+        await using (var context = new AppDbContext(options))
+        {
+            await TestIncludeWithVaryingTakeAsync(context);
+        }
+
+        Console.WriteLine("\nReproduction finished. Check console output for results.");
+    }
+
+    private static async Task SeedDataAsync(AppDbContext context)
+    {
         Console.WriteLine("Seeding database with 500 services (Dutch and English translations)...");
         for (var i = 1; i <= 500; i++)
         {
@@ -80,7 +99,7 @@ public static class Program
             {
                 Translations = new List<ServiceTranslation>
                 {
-                    // Adding Dutch and English translations, German is not included!
+                    // Adding Dutch and English translations, UNUSED is not included!
                     new()
                     {
                         LanguageId = LanguageId.Dutch,
@@ -92,8 +111,8 @@ public static class Program
                         Name = $"{Guid.NewGuid()} English Service {i}",
                     }
                 },
-                Random = Enumerable.Range(0, Random.Next(1, 5))
-                    .Select(_ => new RandomStuff
+                Metadatas = Enumerable.Range(0, 2)
+                    .Select(_ => new ServiceMetadata
                     {
                         ViewCount = Random.Next(0, 2) == 0 ? 0 : 1,
                     })
@@ -110,7 +129,7 @@ public static class Program
     {
         Console.WriteLine("\n--- Test: Checking if Translations are Included with Varying Take Values ---");
 
-        var takeValues = Enumerable.Range(1, 100);
+        var takeValues = Enumerable.Range(1, 20);
         var anyFailures = false;
 
         foreach (var takeAmount in takeValues)
@@ -121,76 +140,23 @@ public static class Program
                 var results = await context.Services
                     .Include(s => s.Translations)
                     .AsSplitQuery()
-                    .Where(x => x.Random.Any(r => r.ViewCount != 1))
+                    .Where(x => x.Metadatas.Any(r => r.ViewCount == 1))
                     .OrderBy(projection =>
                         projection.Translations
-                            .First(t => t.LanguageId == LanguageId.German).Name)
-                    .Select(s => new { ServiceEntity = s, CalculatedY = s.Random.Count })
-                    .Skip(0)
+                            .First(t => t.LanguageId == LanguageId.UNUSED).Name)
                     .Take(takeAmount)
                     .ToListAsync();
 
-                Console.WriteLine($"  Query returned {results.Count} items.");
-
-                if (takeAmount == 0)
+                foreach (var item in results)
                 {
-                    if (results.Any())
+                    if (item.Translations.Count == 0)
                     {
+                        anyFailures = true;
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"  FAIL: Take(0) returned {results.Count} items, expected 0.");
-                        anyFailures = true;
-                    }
-                    else
-                    {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine("  PASS: Take(0) returned 0 items as expected.");
-                    }
-
-                    Console.ResetColor();
-                    continue;
-                }
-
-                if (results.Count == 0 && takeAmount is > 0 and <= 100)
-                {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"  WARN: Take({takeAmount}) returned 0 items, but data should exist.");
-                    Console.ResetColor();
-                }
-
-                bool allIncludedProperly = true;
-                if (results.Any())
-                {
-                    foreach (var item in results)
-                    {
-                        if (item.ServiceEntity.Translations == null || item.ServiceEntity.Translations.Count == 0)
-                        {
-                            allIncludedProperly = false;
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            Console.WriteLine(
-                                $"  FAIL: Item with Id {item.ServiceEntity.Id} has NULL or EMPTY Translations collection.");
-                            Console.ResetColor();
-                            break;
-                        }
-
-                        if (item.ServiceEntity.Translations.Count != 2)
-                        {
-                            allIncludedProperly = false;
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            Console.WriteLine(
-                                $"  FAIL: Item with Id {item.ServiceEntity.Id} has {item.ServiceEntity.Translations.Count} translations, expected 2.");
-                            Console.ResetColor();
-                            break;
-                        }
-                    }
-
-                    if (allIncludedProperly)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"  PASS: All {results.Count} items have their Translations included.");
-                    }
-                    else
-                    {
-                        anyFailures = true;
+                        Console.WriteLine(
+                            $"  FAIL: Item with Id {item.Id} has EMPTY Translations collection.");
+                        Console.ResetColor();
+                        break;
                     }
                 }
 
@@ -220,34 +186,5 @@ public static class Program
         }
 
         Console.ResetColor();
-    }
-
-
-    public static async Task Main(string[] args)
-    {
-        const string connectionString = "Server=localhost,1433;Initial Catalog=efcorebug;Persist Security Info=False;User ID=SA;Password=my_password01!;MultipleActiveResultSets=True;Encrypt=False;TrustServerCertificate=False;Connection Timeout=30;";
-
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlServer(connectionString)
-            .Options;
-
-        Console.WriteLine("Ensuring database is clean before test...");
-        await using (var context = new AppDbContext(options))
-        {
-            await context.Database.EnsureDeletedAsync();
-            Console.WriteLine("Database dropped.");
-
-            await context.Database.EnsureCreatedAsync();
-            Console.WriteLine("Database and schema 'efcore_bug_repro' created.");
-
-            await SeedDataAsync(context);
-        }
-
-        await using (var context = new AppDbContext(options))
-        {
-            await TestIncludeWithVaryingTakeAsync(context);
-        }
-
-        Console.WriteLine("\nReproduction finished. Check console output for results.");
     }
 }
