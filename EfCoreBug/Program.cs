@@ -146,33 +146,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Service> Services { get; set; } = null!;
     public DbSet<ServiceTranslation> ServiceTranslations { get; set; } = null!;
     public DbSet<ServiceMetadata> ServiceMetadata { get; set; } = null!;
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        base.OnModelCreating(modelBuilder);
-
-        modelBuilder.Entity<ServiceTranslation>()
-            .HasKey(st => new { st.ServiceId, st.LanguageId });
-    }
 }
 
 public class Service
 {
     public int Id { get; set; }
-
     public ICollection<ServiceTranslation> Translations { get; set; } = null!;
-
     public ICollection<ServiceMetadata> Metadatas { get; set; } = null!;
 }
 
 public class ServiceTranslation
 {
-    public int ServiceId { get; set; }
+    public int Id { get; set; }
     public Service Service { get; set; } = null!;
-
-
     public LanguageId LanguageId { get; set; }
-
     public required string Name { get; set; }
 }
 
@@ -186,10 +173,7 @@ public enum LanguageId
 public class ServiceMetadata
 {
     public int Id { get; set; }
-
-    public int ServiceId { get; set; }
     public Service Service { get; set; } = null!;
-
     public int ViewCount { get; set; }
 }
 
